@@ -1,12 +1,22 @@
 import time
+import argparse
 import numpy as np
 import IO.IO as io
 import ImageProcessing.Smoothing as sm
 
-input_tif = "/Users/harlan/Documents/binarysmoothing/ssp_test_lcc.tif"
-output_tif = "/Users/harlan/Documents/binarysmoothing/ssp_test_lcc_smoothed.tif"
+def parse_args():
+    parser = argparse.ArgumentParser(description="二值体数据的拓扑平滑处理")
+    parser.add_argument("input_tif", help="输入 TIFF 文件路径")
+    parser.add_argument("output_tif", help="输出 TIFF 文件路径")
+    parser.add_argument("--iterations", type=int, default=2, help="平滑迭代次数 (默认: 2)")
+    parser.add_argument("--processes", choices=["serial", "auto"], default="serial", help="并行模式 (默认: serial)")
+    return parser.parse_args()
 
 def main():
+    args = parse_args()
+    input_tif = args.input_tif
+    output_tif = args.output_tif
+
     t0 = time.perf_counter()
     print("[1/5] 读取 TIFF:", input_tif, flush=True)
     vol = io.read(input_tif)
@@ -17,15 +27,14 @@ def main():
     binary = vol > 0
     print("    二值化完成，耗时: %.2fs" % (time.perf_counter() - t1), flush=True)
 
-    # 先单线程生成查找表，避免 mp.spawn 报错
     t_lut = time.perf_counter()
-    print("[3/5] 生成/加载查找表 (serial)...", flush=True)
-    sm.initialize_lookup_table(verbose=True, processes='serial')
+    print("[3/5] 生成/加载查找表 (%s)..." % args.processes, flush=True)
+    sm.initialize_lookup_table(verbose=True, processes=args.processes)
     print("    查找表准备好，耗时: %.2fs" % (time.perf_counter() - t_lut), flush=True)
 
     t2 = time.perf_counter()
-    print("[4/5] 拓扑平滑开始 (iterations=2, processes='serial')", flush=True)
-    smoothed = sm.smooth_by_configuration(binary, iterations=2, processes='serial', verbose=True)
+    print("[4/5] 拓扑平滑开始 (iterations=%d, processes='%s')" % (args.iterations, args.processes), flush=True)
+    smoothed = sm.smooth_by_configuration(binary, iterations=args.iterations, processes=args.processes, verbose=True)
     print("    平滑完成，耗时: %.2fs" % (time.perf_counter() - t2), flush=True)
 
     t3 = time.perf_counter()
