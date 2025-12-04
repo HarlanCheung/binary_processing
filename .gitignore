@@ -1,2 +1,6 @@
 #ignore numpy file
 *.npy
+#ignore pyc files
+*.pyc
+#ignore __pycache__ directories
+__pycache__/
