@@ -1,0 +1,14 @@
+name: binarysmoothing
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - numpy
+  - psutil
+  - python=3.10
+  - cython
+  - natsort
+  - scipy
+  - tifffile==2020.9.3  
+  - matplotlib
+  - scikit-image
