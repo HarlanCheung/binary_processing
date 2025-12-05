@@ -243,20 +243,26 @@ def process(function, source, sink = None,
     timer = tmr.Timer();
     print("Processing %d blocks with function %r." % (n_blocks, function.__name__))
 
+  print(f"[DEBUG] processes 参数: {processes} (type={type(processes)})", flush=True)
+
   if isinstance(processes, int):
     #from bounded_pool_executor import BoundedProcessPoolExecutor
     #with BoundedProcessPoolExecutor(max_workers=processes) as executor:
     #   executor.map(function, source_blocks, sink_blocks)
+    print(f"[DEBUG] processes 参数: {processes} (type={type(processes)})", flush=True)
     with CancelableProcessPoolExecutor(max_workers=processes) as executor:
       if workspace is not None:
         workspace.executor = executor
+      print(f"[DEBUG] processes 参数: {processes} (type={type(processes)})", flush=True)
       futures = [executor.submit(func, *args) for args in zip(source_blocks, sink_blocks)]
       # res = executor.map(func, source_blocks, sink_blocks)
+      print(f"[DEBUG] 已提交 {len(futures)} 个任务", flush=True)
       result = [f.result() for f in futures]  # To prevent keeping references to futures to avoid mem leaks
       # result = list(res)
       if workspace is not None:
         workspace.executor = None
   else:
+    print(f"[DEBUG] 已提交 {len(futures)} 个任务", flush=True)
     result = [func(*args) for args in zip(source_blocks, sink_blocks)]  #analysis:ignore
 
   if verbose:
