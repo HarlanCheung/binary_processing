@@ -1,6 +1,5 @@
 import time
 import argparse
-import os
 import gc
 from pathlib import Path
 import numpy as np
@@ -38,124 +37,108 @@ def main():
     args = parse_args()
     input_tif = args.input_tif
     output_tif = args.output_tif
-
-    # -----------------------------------------------------------
-    # 🔥 一定要提前创建输出目录，否则 MMP 创建会失败！
-    # -----------------------------------------------------------
-    output_dir = Path(output_tif).parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    temp_input_path = str(output_dir / "temp_input_binary.npy")
-    temp_output_path = str(output_dir / "temp_output_smooth.npy")
+    output_path = Path(output_tif)
 
     # 进程配置
     processes_param = None if args.processes <= 1 else args.processes
 
     t0 = time.perf_counter()
-    print("[1/6] 读取 TIFF:", input_tif, flush=True)
+    print("[1/5] 读取 TIFF 到内存:", input_tif, flush=True)
     vol = io.read(input_tif)
     print("    读取完成，形状:", vol.shape, "dtype:", vol.dtype, "耗时: %.2fs" % (time.perf_counter() - t0), flush=True)
 
-    try:
-        t1 = time.perf_counter()
-        print("[2/6] 转换为内存映射 (MMP)...", flush=True)
+    # 转换为 bool (内存操作)
+    print("[2/5] 转换为二值数据...", flush=True)
+    source_array = (vol > 0)
+    del vol
+    gc.collect()
 
-        # -----------------------------------------------------------
-        # 🔥 必须转换为 uint8 避免 numpy bool memmap 的 header bug
-        # -----------------------------------------------------------
-        binary_vol = (vol > 0).astype(np.uint8)
+    # 使用 memmap 保存二值数据，避免后续进程间拷贝
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    memmap_source_path = output_path.with_name(output_path.name + ".source.mmp.npy")
+    print(f"    创建/覆盖 memmap 源文件: {memmap_source_path}", flush=True)
+    source_mmp = mmp.create(
+        location=str(memmap_source_path),
+        shape=source_array.shape,
+        dtype=bool,
+        order='F'
+    )
+    source_mmp[:] = source_array.astype(bool, copy=False)
+    del source_array
+    gc.collect()
 
-        del vol
-        gc.collect()
+    # -----------------------------------------------------------
+    # 生成查找表
+    # -----------------------------------------------------------
+    t_lut = time.perf_counter()
+    print(f"[3/5] 生成/加载查找表 (processes={processes_param})...", flush=True)
+    sm.initialize_lookup_table(verbose=True, processes=processes_param)
+    print("    查找表准备好，耗时: %.2fs" % (time.perf_counter() - t_lut), flush=True)
 
-        print(f"    创建输入 MMP: {temp_input_path}", flush=True)
-        source_mmp = mmp.create(
-            location=temp_input_path,
-            array=binary_vol,
-            dtype=np.uint8,
-            shape=binary_vol.shape,
-            order="C",     # 🔥 强制 C-order，避免 Fortran-order mismatch
-        )
+    # -----------------------------------------------------------
+    # 分块参数
+    # -----------------------------------------------------------
+    processing_parameter = {}
+    if args.processes > 1:
+        max_block_size = calculate_blockshape_by_processes(source_mmp.shape, args.processes)
+        processing_parameter = {
+            "size_max": max_block_size,
+            "axes": [0, 1, 2],
+            "optimization": False,
+            # memmap 支持按块加载，不需要额外内存开销
+            "as_memory": True
+        }
+        print(f"    [自动分块] 进程数: {args.processes}, size_max: {max_block_size}", flush=True)
 
-        print(f"    创建输出 MMP: {temp_output_path}", flush=True)
-        sink_mmp = mmp.create(
-            location=temp_output_path,
-            shape=binary_vol.shape,
-            dtype=np.uint8,
-            order="C",
-        )
+    # -----------------------------------------------------------
+    # 进行拓扑平滑
+    # -----------------------------------------------------------
+    t2 = time.perf_counter()
+    print(f"[4/5] 拓扑平滑开始 (iterations={args.iterations}, processes={processes_param})", flush=True)
 
-        print("    MMP 创建完成，耗时: %.2fs" % (time.perf_counter() - t1), flush=True)
+    # 输出 memmap，平滑结果直接写入，不占用额外内存
+    memmap_result_path = output_path.with_name(output_path.name + ".smooth.mmp.npy")
+    print(f"    创建/覆盖 memmap 结果文件: {memmap_result_path}", flush=True)
+    result_sink = mmp.create(
+        location=str(memmap_result_path),
+        shape=source_mmp.shape,
+        dtype=bool,
+        order=source_mmp.order
+    )
 
-        del binary_vol
-        gc.collect()
+    # 直接传入 memmap，子进程从磁盘按块读取，避免 pickling 大数组
+    result = sm.smooth_by_configuration(
+        source_mmp,
+        sink=result_sink,
+        iterations=args.iterations,
+        processes=processes_param,
+        processing_parameter=processing_parameter,
+        verbose=True
+    )
+    
+    # sm.smooth_by_configuration 返回的可能是 Source 对象或 array
+    if hasattr(result, 'array'):
+        result_array = result.array
+    else:
+        result_array = result
 
-        # -----------------------------------------------------------
-        # 生成查找表（可能并行）
-        # -----------------------------------------------------------
-        t_lut = time.perf_counter()
-        print(f"[3/6] 生成/加载查找表 (processes={processes_param})...", flush=True)
-        sm.initialize_lookup_table(verbose=True, processes=processes_param)
-        print("    查找表准备好，耗时: %.2fs" % (time.perf_counter() - t_lut), flush=True)
+    print("    平滑完成，耗时: %.2fs" % (time.perf_counter() - t2), flush=True)
 
-        # -----------------------------------------------------------
-        # 分块参数（多进程）
-        # -----------------------------------------------------------
-        processing_parameter = {}
-        if args.processes > 1:
-            max_block_size = calculate_blockshape_by_processes(source_mmp.shape, args.processes)
-            processing_parameter = {
-                "size_max": max_block_size,
-                "axes": [0, 1, 2],
-                "optimization": False,
-                "as_memory": False
-            }
-            print(f"    [自动分块] 进程数: {args.processes}, size_max: {max_block_size}", flush=True)
+    # -----------------------------------------------------------
+    # 转换为 TIFF 输出
+    # -----------------------------------------------------------
+    t3 = time.perf_counter()
+    print("[5/5] 写出最终 TIFF:", output_tif, flush=True)
 
-        # -----------------------------------------------------------
-        # 进行拓扑平滑
-        # -----------------------------------------------------------
-        t2 = time.perf_counter()
-        print(f"[4/6] 拓扑平滑开始 (iterations={args.iterations}, processes={processes_param})", flush=True)
-
-        sm.smooth_by_configuration(
-            source_mmp,
-            sink=sink_mmp,
-            iterations=args.iterations,
-            processes=processes_param,
-            processing_parameter=processing_parameter,
-            verbose=True
-        )
-
-        print("    平滑完成，耗时: %.2fs" % (time.perf_counter() - t2), flush=True)
-
-        # -----------------------------------------------------------
-        # 转换为 TIFF 输出
-        # -----------------------------------------------------------
-        t3 = time.perf_counter()
-        print("[5/6] 写出最终 TIFF:", output_tif, flush=True)
-
-        io.write(output_tif, sink_mmp.array.astype(np.uint8))
-        print("    写出完成，耗时: %.2fs" % (time.perf_counter() - t3), flush=True)
-
-    finally:
-        print("[6/6] 清理临时文件...", flush=True)
-
-        # -----------------------------------------------------------
-        # 🔥 不删除 source_mmp/sink_mmp 对象（避免文件提前关闭）
-        # -----------------------------------------------------------
-
-        for p in [temp_input_path, temp_output_path]:
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except:
-                    pass
-
-        gc.collect()
-
+    # 确保输出目录存在
+    Path(output_tif).parent.mkdir(parents=True, exist_ok=True)
+    
+    # 转换为普通 ndarray 再写出，避免把 memmap 当成 MMP 源导致写入路径为空
+    result_uint8 = np.asarray(result_array, dtype=np.uint8)
+    io.write(output_tif, result_uint8)
+    print("    写出完成，耗时: %.2fs" % (time.perf_counter() - t3), flush=True)
+    
     print("全流程耗时: %.2fs" % (time.perf_counter() - t0), flush=True)
-
 
 if __name__ == "__main__":
     main()

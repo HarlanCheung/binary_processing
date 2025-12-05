@@ -40,7 +40,7 @@ def _new_get_distutils_extension(modname, pyxfilename, language_level=None):
 pyximport.pyximport.get_distutils_extension = _new_get_distutils_extension
 
 pyximport.install(setup_args = {"include_dirs" : [np.get_include(), os.path.dirname(os.path.abspath(__file__))]},
-                  reload_support=True)
+                  reload_support=False)
 
 import ParallelProcessing.DataProcessing.ArrayProcessingCode as code
 
