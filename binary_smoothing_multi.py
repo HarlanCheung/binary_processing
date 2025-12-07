@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import IO.IO as io
 import IO.MMP as mmp
-import ImageProcessing.Smoothing as sm
+import ImageProcessing.binarysmoothing.Smoothing as sm
 
 
 def calculate_blockshape_by_processes(full_shape, num_processes):

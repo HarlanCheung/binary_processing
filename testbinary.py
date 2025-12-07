@@ -2,7 +2,7 @@ import time
 import argparse
 import numpy as np
 import IO.IO as io
-import ImageProcessing.Smoothing as sm
+import ImageProcessing.binarysmoothing.Smoothing as sm
 
 def parse_args():
     parser = argparse.ArgumentParser(description="二值体数据的拓扑平滑处理")
