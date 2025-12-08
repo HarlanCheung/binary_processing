@@ -19,7 +19,7 @@ def summarize(arr):
     euler = None
     try:
         from skimage.measure import euler_number
-        euler = euler_number(arr, connectivity=1)
+        euler = euler_number(arr, connectivity=3)
     except Exception as exc:
         print("    Euler 计算跳过：", exc, flush=True)
     return voxels, n_cc, euler
